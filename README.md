@@ -12,6 +12,7 @@ Built using Claude Code, then used to build itself.
 - Tools: `read`, `write`, `edit`, `glob`, `grep`, `bash`
 - Conversation history
 - Colored terminal output
+- Enhanced system context (OS, Python version, shell, available tools)
 
 ## Usage
 
@@ -40,6 +41,7 @@ python nanocode.py
 ## Commands
 
 - `/c` - Clear conversation
+- `/i` - Show system information
 - `/q` or `exit` - Quit
 
 ## Tools

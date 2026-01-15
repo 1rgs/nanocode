@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """nanocode - minimal claude code alternative"""
 
-import glob as globlib, json, os, re, subprocess, urllib.request
+import glob as globlib, json, os, platform, re, shutil, subprocess, sys, urllib.request
 
 OPENROUTER_KEY = os.environ.get("OPENROUTER_API_KEY")
 API_URL = "https://openrouter.ai/api/v1/messages" if OPENROUTER_KEY else "https://api.anthropic.com/v1/messages"
@@ -16,6 +16,38 @@ BLUE, CYAN, GREEN, YELLOW, RED = (
     "\033[33m",
     "\033[31m",
 )
+
+
+# --- System information ---
+
+
+def get_system_info():
+    """Gather system information to help LLM provide contextually appropriate responses."""
+    info_parts = []
+    
+    # Operating system
+    os_name = platform.system()
+    info_parts.append(f"OS: {os_name}")
+    
+    # Python version
+    py_version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+    info_parts.append(f"Python: {py_version}")
+    
+    # Shell
+    shell = os.environ.get("SHELL", os.environ.get("COMSPEC", "unknown"))
+    shell_name = os.path.basename(shell) if shell != "unknown" else "unknown"
+    info_parts.append(f"Shell: {shell_name}")
+    
+    # Current working directory
+    info_parts.append(f"CWD: {os.getcwd()}")
+    
+    # Check for common development tools
+    tools = ["git", "npm", "node", "pip", "docker", "make"]
+    available = [t for t in tools if shutil.which(t)]
+    if available:
+        info_parts.append(f"Tools: {', '.join(available)}")
+    
+    return " | ".join(info_parts)
 
 
 # --- Tool implementations ---
@@ -198,9 +230,12 @@ def render_markdown(text):
 
 
 def main():
+    system_info = get_system_info()
     print(f"{BOLD}nanocode{RESET} | {DIM}{MODEL} ({'OpenRouter' if OPENROUTER_KEY else 'Anthropic'}) | {os.getcwd()}{RESET}\n")
     messages = []
-    system_prompt = f"Concise coding assistant. cwd: {os.getcwd()}"
+    system_prompt = f"""Concise coding assistant.
+{system_info}
+Provide OS-appropriate commands and file paths based on the system information above."""
 
     while True:
         try:
@@ -214,6 +249,9 @@ def main():
             if user_input == "/c":
                 messages = []
                 print(f"{GREEN}⏺ Cleared conversation{RESET}")
+                continue
+            if user_input == "/i":
+                print(f"{CYAN}⏺ System Info:{RESET}\n  {system_info}")
                 continue
 
             messages.append({"role": "user", "content": user_input})
