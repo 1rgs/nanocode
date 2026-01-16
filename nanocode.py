@@ -185,8 +185,12 @@ def call_api(messages, system_prompt):
             **({"Authorization": f"Bearer {OPENROUTER_KEY}"} if OPENROUTER_KEY else {"x-api-key": os.environ.get("ANTHROPIC_API_KEY", "")}),
         },
     )
-    response = urllib.request.urlopen(request)
-    return json.loads(response.read())
+    try:
+        response = urllib.request.urlopen(request)
+        return json.loads(response.read())
+    except urllib.error.HTTPError as e:
+        error_body = e.read().decode()
+        raise Exception(f"API Error ({e.code}) {error_body}")
 
 
 def separator():
