@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """nanocode - minimal claude code alternative"""
 
-import glob as globlib, json, os, re, subprocess, urllib.request
+import difflib, glob as globlib, json, os, re, subprocess, sys, termios, tty, urllib.request
 
 OPENROUTER_KEY = os.environ.get("OPENROUTER_API_KEY")
 API_URL = "https://openrouter.ai/api/v1/messages" if OPENROUTER_KEY else "https://api.anthropic.com/v1/messages"
@@ -17,6 +17,65 @@ BLUE, CYAN, GREEN, YELLOW, RED = (
     "\033[31m",
 )
 
+# --- Diff and confirmation ---
+
+def select(options):
+    """Arrow-key selection menu. Returns selected index."""
+    fd = sys.stdin.fileno()
+    old = termios.tcgetattr(fd)
+    idx = 0
+    try:
+        tty.setraw(fd)
+        while True:
+            sys.stdout.write(f"\r\033[K")
+            for i, opt in enumerate(options):
+                sel = f"{BOLD}{GREEN}● {opt}{RESET}  " if i == idx else f"{DIM}○ {opt}{RESET}  "
+                sys.stdout.write(sel)
+            sys.stdout.flush()
+            ch = sys.stdin.read(1)
+            if ch in ("\r", "\n"):
+                break
+            if ch == "\x1b":
+                seq = sys.stdin.read(2)
+                if seq in ("[A", "[D"):
+                    idx = (idx - 1) % len(options)
+                elif seq in ("[B", "[C"):
+                    idx = (idx + 1) % len(options)
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+        print()
+    return idx
+
+
+def confirm_change(path, old_content, new_content):
+    """Show diff and ask user to accept/decline."""
+    old_lines = old_content.splitlines(keepends=True) if old_content else []
+    new_lines = new_content.splitlines(keepends=True) if new_content else []
+    diff = list(difflib.unified_diff(old_lines, new_lines, n=3))
+
+    action = "New" if not old_content else "Delete" if not new_content else "Edit"
+    width = min(os.get_terminal_size().columns, 80)
+    bar = f"{DIM}{'─' * width}{RESET}"
+
+    print(f"\n{bar}\n{YELLOW}● {action}:{RESET} {BOLD}{path}{RESET}\n{bar}")
+    old_ln = new_ln = 0
+    for line in diff[2:]:
+        txt = line[1:].rstrip("\n")
+        if line[0] == "@":
+            m = re.match(r"@@ -(\d+)(?:,\d+)? \+(\d+)", line)
+            old_ln, new_ln = (int(m.group(1)), int(m.group(2))) if m else (1, 1)
+        elif line[0] == "-":
+            print(f"{RED}{old_ln:>6} - {txt}{RESET}"); old_ln += 1
+        elif line[0] == "+":
+            print(f"{GREEN}{new_ln:>6} + {txt}{RESET}"); new_ln += 1
+        else:
+            print(f"{DIM}{old_ln:>6}   {txt}{RESET}"); old_ln += 1; new_ln += 1
+    print(bar)
+
+    if select(["Yes", "No"]) == 0:
+        return None
+    reason = input(f"{DIM}Reason (optional):{RESET} ").strip()
+    return f"declined: {reason}" if reason else "declined"
 
 # --- Tool implementations ---
 
@@ -30,24 +89,32 @@ def read(args):
 
 
 def write(args):
-    with open(args["path"], "w") as f:
-        f.write(args["content"])
+    path, new_content = args["path"], args["content"]
+    try:
+        old_content = open(path).read()
+    except FileNotFoundError:
+        old_content = ""
+    if result := confirm_change(path, old_content, new_content):
+        return result
+    with open(path, "w") as f:
+        f.write(new_content)
     return "ok"
 
 
 def edit(args):
-    text = open(args["path"]).read()
+    path = args["path"]
+    old_content = open(path).read()
     old, new = args["old"], args["new"]
-    if old not in text:
+    if old not in old_content:
         return "error: old_string not found"
-    count = text.count(old)
+    count = old_content.count(old)
     if not args.get("all") and count > 1:
         return f"error: old_string appears {count} times, must be unique (use all=true)"
-    replacement = (
-        text.replace(old, new) if args.get("all") else text.replace(old, new, 1)
-    )
-    with open(args["path"], "w") as f:
-        f.write(replacement)
+    new_content = old_content.replace(old, new) if args.get("all") else old_content.replace(old, new, 1)
+    if result := confirm_change(path, old_content, new_content):
+        return result
+    with open(path, "w") as f:
+        f.write(new_content)
     return "ok"
 
 
