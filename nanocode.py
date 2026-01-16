@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """nanocode - minimal claude code alternative"""
 
-import glob as globlib, json, os, re, subprocess, urllib.request
+import difflib, glob as globlib, json, os, re, subprocess, sys, termios, tty, urllib.request
 
 OPENROUTER_KEY = os.environ.get("OPENROUTER_API_KEY")
 API_URL = "https://openrouter.ai/api/v1/messages" if OPENROUTER_KEY else "https://api.anthropic.com/v1/messages"
@@ -17,6 +17,58 @@ BLUE, CYAN, GREEN, YELLOW, RED = (
     "\033[31m",
 )
 
+# --- Diff and confirmation ---
+
+def confirm():
+    fd = sys.stdin.fileno()
+    old = termios.tcgetattr(fd)
+    try:
+        tty.setraw(fd)
+        sys.stdout.write(f"{DIM}[Enter] accept · [d] decline{RESET} ")
+        sys.stdout.flush()
+        while True:
+            ch = sys.stdin.read(1)
+            if ch in ("\r", "\n"):
+                return True
+            if ch in ("d", "D"):
+                return False
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+        print()
+
+
+def confirm_change(path, old_content, new_content):
+    old_lines = old_content.splitlines(keepends=True) if old_content else []
+    new_lines = new_content.splitlines(keepends=True) if new_content else []
+    diff = list(difflib.unified_diff(old_lines, new_lines, n=3))
+
+    action = "New" if not old_content else "Delete" if not new_content else "Edit"
+    width = min(os.get_terminal_size().columns, 80)
+    bar = f"{DIM}{'─' * width}{RESET}"
+
+    print(f"\n{bar}\n{YELLOW}● {action}:{RESET} {BOLD}{path}{RESET}\n{bar}")
+    old_ln = new_ln = 0
+    for line in diff[2:]:
+        txt = line[1:].rstrip("\n")
+        if line[0] == "@":
+            m = re.match(r"@@ -(\d+)(?:,\d+)? \+(\d+)", line)
+            old_ln, new_ln = (int(m.group(1)), int(m.group(2))) if m else (1, 1)
+        elif line[0] == "-":
+            print(f"{RED}{old_ln:>6} - {txt}{RESET}"); old_ln += 1
+        elif line[0] == "+":
+            print(f"{GREEN}{new_ln:>6} + {txt}{RESET}"); new_ln += 1
+        else:
+            print(f"{DIM}{old_ln:>6}   {txt}{RESET}"); old_ln += 1; new_ln += 1
+    print(bar)
+
+    if confirm():
+        print(f"{GREEN}✓ Accepted{RESET}")
+        return None
+    reason = input(f"{DIM}Reason (optional):{RESET} ").strip() or "stop and wait for further instructions"
+    status = {"New": "file NOT created", "Edit": "file NOT modified", "Delete": "file NOT deleted"}[action]
+    msg = f"declined ({status}): {reason}"
+    print(f"{RED}✗ {msg}{RESET}")
+    return msg
 
 # --- Tool implementations ---
 
@@ -30,24 +82,34 @@ def read(args):
 
 
 def write(args):
-    with open(args["path"], "w") as f:
-        f.write(args["content"])
+    path, new_content = args["path"], args["content"]
+    try:
+        old_content = open(path).read()
+    except FileNotFoundError:
+        old_content = ""
+    result = confirm_change(path, old_content, new_content)
+    if result:  # declined
+        return result
+    with open(path, "w") as f:
+        f.write(new_content)
     return "ok"
 
 
 def edit(args):
-    text = open(args["path"]).read()
+    path = args["path"]
+    old_content = open(path).read()
     old, new = args["old"], args["new"]
-    if old not in text:
+    if old not in old_content:
         return "error: old_string not found"
-    count = text.count(old)
+    count = old_content.count(old)
     if not args.get("all") and count > 1:
         return f"error: old_string appears {count} times, must be unique (use all=true)"
-    replacement = (
-        text.replace(old, new) if args.get("all") else text.replace(old, new, 1)
-    )
-    with open(args["path"], "w") as f:
-        f.write(replacement)
+    new_content = old_content.replace(old, new) if args.get("all") else old_content.replace(old, new, 1)
+    result = confirm_change(path, old_content, new_content)
+    if result:  # declined
+        return result
+    with open(path, "w") as f:
+        f.write(new_content)
     return "ok"
 
 
@@ -200,7 +262,7 @@ def render_markdown(text):
 def main():
     print(f"{BOLD}nanocode{RESET} | {DIM}{MODEL} ({'OpenRouter' if OPENROUTER_KEY else 'Anthropic'}) | {os.getcwd()}{RESET}\n")
     messages = []
-    system_prompt = f"Concise coding assistant. cwd: {os.getcwd()}"
+    system_prompt = f"Concise coding assistant. cwd: {os.getcwd()}. When a file change is declined, respect the user's feedback and adjust accordingly. Do not retry the same change."
 
     while True:
         try:
@@ -223,6 +285,7 @@ def main():
                 response = call_api(messages, system_prompt)
                 content_blocks = response.get("content", [])
                 tool_results = []
+                declined = False
 
                 for block in content_blocks:
                     if block["type"] == "text":
@@ -237,6 +300,8 @@ def main():
                         )
 
                         result = run_tool(tool_name, tool_args)
+                        if "stop and wait" in result:
+                            declined = True
                         result_lines = result.split("\n")
                         preview = result_lines[0][:60]
                         if len(result_lines) > 1:
@@ -254,10 +319,10 @@ def main():
                         )
 
                 messages.append({"role": "assistant", "content": content_blocks})
-
-                if not tool_results:
+                if tool_results:
+                    messages.append({"role": "user", "content": tool_results})
+                if not tool_results or declined:
                     break
-                messages.append({"role": "user", "content": tool_results})
 
             print()
 

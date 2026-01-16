@@ -1,6 +1,6 @@
 # nanocode
 
-Minimal Claude Code alternative. Single Python file, zero dependencies, ~250 lines.
+Minimal Claude Code alternative. Single Python file, zero dependencies, ~337 lines.
 
 Built using Claude Code, then used to build itself.
 
@@ -12,6 +12,7 @@ Built using Claude Code, then used to build itself.
 - Tools: `read`, `write`, `edit`, `glob`, `grep`, `bash`
 - Conversation history
 - Colored terminal output
+- Diff confirmation: file changes show colored diffs with line numbers; accept/decline, optional decline reason sent to model
 
 ## Usage
 
