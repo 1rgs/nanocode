@@ -252,11 +252,30 @@ def main():
                                 "content": result,
                             }
                         )
+                        
+                        # Check for repeated failures immediately
+                        if result.startswith("error:"):
+                            recent_errors = sum(
+                                1 for msg in messages[-4:] 
+                                if msg.get("role") == "user"
+                                for b in (msg.get("content", []) if isinstance(msg.get("content"), list) else [])
+                                if isinstance(b, dict) and b.get("type") == "tool_result" and "error:" in str(b.get("content", ""))
+                            )
+                            
+                            if recent_errors >= 1:  # Current error + 1 previous = bail
+                                print(f"{YELLOW}⚠ Repeated tool failures detected, halting execution{RESET}")
+                                tool_results.append({
+                                    "type": "tool_result",
+                                    "tool_use_id": "recovery",
+                                    "content": "SYSTEM: Multiple tool failures detected. Stop using tools and explain what went wrong with an alternative approach."
+                                })
+                                break  # Exit the content_blocks loop
 
                 messages.append({"role": "assistant", "content": content_blocks})
 
                 if not tool_results:
                     break
+                
                 messages.append({"role": "user", "content": tool_results})
 
             print()
