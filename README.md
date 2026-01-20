@@ -1,10 +1,10 @@
-# nanocode
+# nanocode-plus
 
-Minimal Claude Code alternative. Single Python file, zero dependencies, ~250 lines.
+## Usage
 
-Built using Claude Code, then used to build itself.
-
-![screenshot](screenshot.png)
+```bash
+API_BASE=http://127.0.0.1:8080/v1 MODEL=unsloth/GLM-4.7-Flash-GGUF:Q4_K_M TOOL_CALL_PARSER=glm python3 nanocode.py
+```
 
 ## Features
 

@@ -3,9 +3,11 @@
 
 import glob as globlib, json, os, re, subprocess, urllib.request
 
-API_URL = "http://localhost:8080/v1/chat/completions"
-API_KEY = ""
-MODEL = "unsloth/GLM-4.7-Flash-GGUF:Q4_K_M"
+# === Configuration (from environment variables) ===
+API_BASE = os.getenv("API_BASE", "http://localhost:8080/v1").rstrip("/")
+API_KEY = os.getenv("API_KEY", "")
+MODEL = os.getenv("MODEL")  # None if not set
+TOOL_CALL_PARSER_NAME = os.getenv("TOOL_CALL_PARSER")  # e.g., "glm" or None
 
 # ANSI colors
 RESET, BOLD, DIM = "\033[0m", "\033[1m", "\033[2m"
@@ -180,9 +182,13 @@ def parse_glm_tool_calls(content):
     return tool_calls, clean_content
 
 
-# Tool call parser configuration
-# Set to a parser function (e.g., parse_glm_tool_calls), or None for OpenAI format
-TOOL_CALL_PARSER = parse_glm_tool_calls
+# Resolve TOOL_CALL_PARSER from environment variable
+def get_parser(name):
+    if not name:
+        return None
+    return globals().get(f"parse_{name}_tool_calls")
+
+TOOL_CALL_PARSER = get_parser(TOOL_CALL_PARSER_NAME)
 
 
 def make_schema():
@@ -217,16 +223,16 @@ def make_schema():
 
 def call_api(messages, system_prompt):
     all_messages = [{"role": "system", "content": system_prompt}] + messages
+    payload = {
+        "max_tokens": 8192,
+        "messages": all_messages,
+        "tools": make_schema(),
+    }
+    if MODEL:
+        payload["model"] = MODEL
     request = urllib.request.Request(
-        API_URL,
-        data=json.dumps(
-            {
-                "model": MODEL,
-                "max_tokens": 8192,
-                "messages": all_messages,
-                "tools": make_schema(),
-            }
-        ).encode(),
+        API_BASE + "/chat/completions",
+        data=json.dumps(payload).encode(),
         headers={
             "Content-Type": "application/json",
             "Authorization": f"Bearer {API_KEY}",
