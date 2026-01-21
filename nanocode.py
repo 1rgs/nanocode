@@ -156,8 +156,8 @@ def bash(cmd: str) -> str:
     except Exception as e:
         return f"Execution error: {str(e)}"
     
-@tool(task='Specific task')
-def explore(task: str, parallel: bool = True):
+@tool(task='Specific task', parallel='Whether to parallelize, it is generally True')
+def explore(task: str, parallel: bool):
     """
     Execute sub-agent for exploration tasks, dispatch when you need to locate issues or summarize in large amounts of text.
 
@@ -182,12 +182,24 @@ def explore(task: str, parallel: bool = True):
     Use the done tool to report results.
     Current working directory: {Path.cwd().as_posix()}"""
     sub_tools = ['read', 'glob', 'grep', 'done'] 
-    messages = [{'role': 'system','content': EXPLORE_SYSTEM_PROMPT}]
+    messages = [{'role': 'system','content': EXPLORE_SYSTEM_PROMPT},
+                {'role': 'user', 'content': task}]
     
     for event in agent_loop(llm, messages, sub_tools):
         match event:
             case FinalResponseEvent(content=results):
                 pass
+
+    # for e in agent_loop(llm=llm, messages=messages, tools=sub_tools):
+    #     match e:
+    #         case TextEvent(content=content):
+    #             print(   render_markdown(content))
+    #         case ToolCallEvent(tool=tool, args=args):
+    #             print(f'   [{tool}] {args}'[:])
+    #         case ToolResultEvent(tool=tool, result=result):
+    #             print(f'     - {tool}: {result}'[:80])
+    #         case FinalResponseEvent(content=results):
+    #             pass
             
     return results[-1]['content']
 
@@ -266,6 +278,8 @@ def agent_loop(llm: LLM, messages: list, tools: list[str]):
     while True:
         reponse = llm.call(messages, tools)
 
+        # print(reponse)
+
         message = reponse['choices'][0]['message']
         messages.append(message)
 
@@ -276,7 +290,9 @@ def agent_loop(llm: LLM, messages: list, tools: list[str]):
             yield TextEvent(content=content)
 
         if not tool_calls:
-            # TODO Maybe 
+            if 'done' in tools:
+                messages.append({'role': 'user', 'content': "You haven't completed the task yet, please continue."})
+                continue
             yield FinalResponseEvent(content=messages)
             return
 
@@ -288,12 +304,11 @@ def agent_loop(llm: LLM, messages: list, tools: list[str]):
                 tool_args = json.loads(tool['function']['arguments'])
                 tool_call_id = tool['id']
 
+                yield ToolCallEvent(tool=tool_name, args=str(tool_args), tool_call_id=tool_call_id)
+
                 if tool_name == 'done':
-                    # Using the done tool to reply can reduce the issue of AI responding before completing the task.
                     yield FinalResponseEvent(content=messages)
                     return
-
-                yield ToolCallEvent(tool=tool_name, args=str(tool_args), tool_call_id=tool_call_id)
 
                 # Categorize the tools.
                 if tool_args.get('parallel'):
@@ -422,7 +437,7 @@ def main():
         model='deepseek-reasoner',
         api_key=os.environ['DEEP_SEEK_AGENT_KEY'],
         base_url='https://api.deepseek.com/chat/completions',
-        thinking='enabled'
+        thinking='disabled'
     )
 
     messages = [{'role': 'system','content': SYSTEM_PROMPT}]
@@ -443,7 +458,7 @@ def main():
                     case TextEvent(content=content):
                         print(render_markdown(content))
                     case ToolCallEvent(tool=tool, args=args):
-                        print(f'[{tool}] {args}'[:80])
+                        print(f'[{tool}] {args}'[:])
                     case ToolResultEvent(tool=tool, result=result):
                         print(f'  - {tool}: {result}'[:80])
                     case FinalResponseEvent(content=content):
