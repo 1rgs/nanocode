@@ -156,25 +156,25 @@ def bash(cmd: str) -> str:
     except Exception as e:
         return f"Execution error: {str(e)}"
     
-# --- 代理工具 ---
-@tool(report='你的报告')
+# --- Agent Tools ---
+@tool(report='Your report')
 def done(report: str) -> str:
-    '''当你结束任务时调用'''
+    '''Call this when you finish the task'''
     return report
 
-@tool(task='任务说明', parallel='是否并行执行，一般为True')
+@tool(task='Task description', parallel='Whether to execute in parallel, usually True')
 def explore(task: str, parallel: bool) -> str:
     """
-    执行探索任务的子代理，当你需要在大量文本中定位问题或者总结的时候派遣。
+    A sub-agent that executes exploration tasks. Dispatch when you need to locate issues or summarize in large amounts of text.
 
-    请使用以下格式传递任务：
+    Please use the following format to pass tasks:
 
-    # 任务主题
-    说明你遇到的问题
-    # 范围
-    最有可能的文件
-    # 任务步骤
-    使用有序列表分步骤指示子代理行动，说明期望的回复
+    # Task Topic
+    Explain the problem you encountered
+    # Scope
+    Most likely files
+    # Task Steps
+    Use ordered list to guide the sub-agent step by step, explain the expected response
     """
 
     llm = DeepSeekLLM(
@@ -182,17 +182,17 @@ def explore(task: str, parallel: bool) -> str:
         api_key=os.environ['DEEP_SEEK_AGENT_KEY'],
         base_url='https://api.deepseek.com/chat/completions'
     )
-    
-    # 定义子任务能用的工具子集
+
+    # Define the subset of tools available to sub-tasks
     EXPLORE_SYSTEM_PROMPT = f"""
-    你擅长在众多的文件中定位信息，你负责根据任务完成要求，并作出简短但符合任务要求的总结
-    当你完成任务时，使用 done 工具报告
-    当前工作目录：{Path.cwd().as_posix()}
-    其下文件与目录：{"\n".join([f.name + ("/" if f.is_dir() else "") for f in Path.cwd().iterdir()])}"""
-    sub_tools = ['read', 'glob', 'grep', 'done'] 
+    You are good at locating information among numerous files. You are responsible for completing the task requirements and making a concise summary that meets the task requirements
+    When you complete the task, use the done tool to report
+    Current working directory: {Path.cwd().as_posix()}
+    Files and directories under it: {"\n".join([f.name + ("/" if f.is_dir() else "") for f in Path.cwd().iterdir()])}"""
+    sub_tools = ['read', 'glob', 'grep', 'done']
     messages = [{'role': 'system','content': EXPLORE_SYSTEM_PROMPT},
                 {'role': 'user', 'content': task}]
-    
+
     for event in agent_loop(llm, messages, sub_tools, max_step=20):
         match event:
             case FinalResponseEvent(messages):
@@ -282,15 +282,15 @@ class ZAILLM(OpenAILike):
 def agent_loop(llm: LLM, messages: list, tools: list[str], max_step: int = 200):
 
     def _execute_tool_func(name: str, args: dict):
-        '''调用函数'''
+        '''Call function'''
         func = TOOLS[name][1]
         try:
             return func(**args)
         except Exception as e:
             return f"error: {e}"
-        
+
     def _handle_tool_result(name: str, result: Any, tool_call_id: str):
-        '''处理函数执行结果'''
+        '''Handle function execution result'''
         messages.append({
             'role': 'tool',
             'content': json.dumps(result, ensure_ascii=False),
@@ -303,11 +303,11 @@ def agent_loop(llm: LLM, messages: list, tools: list[str], max_step: int = 200):
         step += 1
         is_final = False
 
-        # TODO 上下文管理
+        # TODO Context management
 
-        # 到达最大步数的处理
+        # Handle reaching max steps
         if step >= max_step:
-            messages.append({'role': 'user', 'content': '你已经达到最大步数，立刻报告现有成果。\n1.尝试了哪些方法\n2.获得什么信息\n3.建议接下来如何继续'})
+            messages.append({'role': 'user', 'content': 'You have reached the maximum steps. Report your current results immediately.\n1. What methods did you try\n2. What information did you get\n3. Suggest how to continue'})
             tools = []
             is_final = True
 
@@ -316,7 +316,7 @@ def agent_loop(llm: LLM, messages: list, tools: list[str], max_step: int = 200):
         message = response['choices'][0]['message']
         messages.append(message)
 
-        # 解析返回的内容
+        # Parse returned content
         tool_calls = message.get('tool_calls')
         content = message.get('content')
 
@@ -324,11 +324,11 @@ def agent_loop(llm: LLM, messages: list, tools: list[str], max_step: int = 200):
             yield TextEvent(content=content)
         if not tool_calls:
             if 'done' in tools:
-                messages.append({'role': 'user', 'content': "请使用 done 工具结束任务"})
+                messages.append({'role': 'user', 'content': "Please use the done tool to finish the task"})
                 continue
             is_final = True
         else:
-            # --- 准备工具调用数据 ---
+            # --- Prepare tool call data ---
             parallel_tools = []
             serial_tools = []
             for tool in tool_calls:
@@ -338,29 +338,29 @@ def agent_loop(llm: LLM, messages: list, tools: list[str], max_step: int = 200):
 
                 if tool_name == 'done':
                     is_final = True
-        
+
                 if tool_args.get('parallel'):
                     parallel_tools.append({'name': tool_name, 'args': tool_args, 'id': tool_call_id})
                 else:
                     serial_tools.append({'name': tool_name, 'args': tool_args, 'id': tool_call_id})
 
-            # --- 执行串行工具 ---
+            # --- Execute serial tools ---
             for tool in serial_tools:
                 yield ToolCallEvent(tool=tool['name'], args=str(tool['args']), tool_call_id=tool['id'])
                 result = _execute_tool_func(tool['name'], tool['args'])
                 yield _handle_tool_result(tool['name'], result, tool['id'])
-            
-            # --- 执行并行工具 ---
+
+            # --- Execute parallel tools ---
             if parallel_tools:
                 with ThreadPoolExecutor() as executor:
                     futures = {}
-                    # 提交所有并行任务
+                    # Submit all parallel tasks
                     for tool in parallel_tools:
                         yield ToolCallEvent(tool=tool['name'], args=str(tool['args']), tool_call_id=tool['id'])
                         future = executor.submit(_execute_tool_func, tool['name'], tool['args'])
-                        # 将 future 与元数据绑定，以便后续获取时知道对应的是哪个工具
-                        futures[future] = tool 
-                    # 获取结果
+                        # Bind future with metadata so we know which tool it corresponds to when retrieving
+                        futures[future] = tool
+                    # Get results
                     for future in futures:
                         tool_info = futures[future]
                         try:
@@ -395,7 +395,7 @@ class TerminalRenderer:
 
     @classmethod
     def separator(cls):
-        """生成一条自适应宽度的分割线"""
+        """Generate an adaptive width separator line"""
         try:
             columns = os.get_terminal_size().columns
         except OSError:
@@ -404,26 +404,26 @@ class TerminalRenderer:
     
     @classmethod
     def print_user_input(cls) -> str:
-        """渲染用户输入"""
+        """Render user input"""
         user_input = input(f"{cls.BOLD}{cls.BLUE}❯{cls.RESET} ").strip()
         return user_input
 
     @classmethod
     def print_text(cls, content):
-        """渲染普通文本回复"""
+        """Render regular text response"""
         print()
         print(f"{cls.CYAN}{cls.ICON}{cls.RESET} {cls.render_markdown(content.strip())}")
         print()
 
     @classmethod
     def print_tool_call(cls, tool_name, args):
-        """渲染工具调用"""
+        """Render tool call"""
         arg_preview = str(args)[:50]
         print(f"{cls.GREEN}{cls.ICON} {tool_name.capitalize()}{cls.RESET}({cls.DIM}{arg_preview}{cls.RESET})")
 
     @classmethod
     def print_tool_result(cls, result):
-        """渲染工具返回的结果预览"""
+        """Render preview of tool return result"""
         lines = result.split("\n")
         preview = lines[0][:60]
         if len(lines) > 1:
@@ -434,18 +434,18 @@ class TerminalRenderer:
 
     @classmethod
     def print_error(cls, message):
-        """渲染错误信息"""
+        """Render error message"""
         print(f"{cls.RED}{cls.ICON} Error: {message}{cls.RESET}")
 
     @classmethod
     def print_info(cls, message):
-        """渲染提示信息"""
+        """Render info message"""
         print(f"{cls.GREEN}{cls.ICON} {message}{cls.RESET}")
         
     @classmethod
     def render_markdown(cls, text: str) -> str:
-        """解析简单的 Markdown 语法并转换为终端转义字符"""
-        """渲染AI输出文本（支持Markdown）"""
+        """Parse simple Markdown syntax and convert to terminal escape sequences"""
+        """Render AI output text (supports Markdown)"""
         if not text:
             return ""
         
@@ -454,7 +454,7 @@ class TerminalRenderer:
         is_code = False
         
         for line in lines:
-            # 跳过代码块标记
+            # Skip code block markers
             if line.startswith("```"):
                 result.append(line)  
                 is_code = not is_code
@@ -463,16 +463,16 @@ class TerminalRenderer:
                 result.append(line)
                 continue   
 
-            # 粗体
+            # Bold
             line = re.sub(r"\*\*([^*]+?)\*\*", f"{cls.BOLD}\\1{cls.RESET}", line)
-            # 斜体/强调
+            # Italic/emphasis
             line = re.sub(r"\*(.+?)\*", f"{cls.DIM}\\1{cls.RESET}", line)
-            # 行内代码
+            # Inline code
             line = re.sub(r"`(.+?)`", f"{cls.GREEN}\\1{cls.RESET}", line)
-            # 链接（只显示文本）
+            # Links (show only text)
             line = re.sub(r"$$(.+?)$$$.+?$", f"{cls.BLUE}\\1{cls.RESET}", line)
-            
-            # 标题
+
+            # Headers
             if line.startswith("####"):
                 line = f"{cls.DIM}{line.strip('#').strip()}{cls.RESET}"
             elif line.startswith("###"):
@@ -481,10 +481,10 @@ class TerminalRenderer:
                 line = f"{cls.BLUE}{cls.BOLD}{line.strip('#').strip()}{cls.RESET}"
             elif line.startswith("#"):
                 line = f"{cls.CYAN}{cls.BOLD}{line.strip('#').strip()}{cls.RESET}"
-            # 引用
+            # Quote
             elif line.startswith(">"):
                 line = f"{cls.DIM}  {line[1:].strip()}{cls.RESET}"
-            # 列表项
+            # List items
             elif line.strip().startswith(("-", "*", "+ ")) and len(line.strip()) > 1 and line.strip()[1].isspace():
                 line = f"{cls.CYAN}•{cls.RESET} " + line.strip()[2:]
             
@@ -513,7 +513,7 @@ def main():
     llm = ZAILLM(
         model='GLM-4.7',
         api_key=os.environ['ZAI_KEY'],
-        base_url=''
+        base_url='https://open.bigmodel.cn/api/paas/v4/chat/completions'
     )
 
     TR.print_start(llm)
