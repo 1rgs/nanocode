@@ -52,7 +52,7 @@ def edit(args):
 
 
 def glob(args):
-    pattern = (args.get("path", ".") + "/" + args["pat"]).replace("//", "/")
+    pattern = (args.get("path", ".") + "/" + args["path"]).replace("//", "/")
     files = globlib.glob(pattern, recursive=True)
     files = sorted(
         files,
@@ -63,7 +63,7 @@ def glob(args):
 
 
 def grep(args):
-    pattern = re.compile(args["pat"])
+    pattern = re.compile(args["path"])
     hits = []
     for filepath in globlib.glob(args.get("path", ".") + "/**", recursive=True):
         try:
@@ -117,12 +117,12 @@ TOOLS = {
     ),
     "glob": (
         "Find files by pattern, sorted by mtime",
-        {"pat": "string", "path": "string?"},
+        {"path": "string", "path": "string?"},
         glob,
     ),
     "grep": (
         "Search files for regex pattern",
-        {"pat": "string", "path": "string?"},
+        {"path": "string", "path": "string?"},
         grep,
     ),
     "bash": (
